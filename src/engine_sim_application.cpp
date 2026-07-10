@@ -16,9 +16,25 @@
 
 #include "../scripting/include/compiler.h"
 
+// PORT NOTE (M0 macOS bring-up): impulse response .wav loading below used
+// ysWindowsAudioWaveFile (Windows Multimedia I/O) unconditionally; use the
+// portable ysMacAudioWaveFile (plain RIFF/WAVE parsing over ISO C file I/O,
+// see yds_mac_audio_wave_file.cpp) on non-Windows platforms instead.
+#if defined(_WIN32)
+#include "../dependencies/submodules/delta-studio/include/yds_windows_audio_wave_file.h"
+#else
+#include "../dependencies/submodules/delta-studio/include/yds_mac_audio_wave_file.h"
+#endif
+
 #include <chrono>
 #include <stdlib.h>
 #include <sstream>
+
+#if defined(_WIN32)
+using PlatformAudioWaveFile = ysWindowsAudioWaveFile;
+#else
+using PlatformAudioWaveFile = ysMacAudioWaveFile;
+#endif
 
 #if ATG_ENGINE_SIM_DISCORD_ENABLED
 #include "../discord/Discord.h"
@@ -490,7 +506,7 @@ void EngineSimApplication::loadEngine(
     for (int i = 0; i < engine->getExhaustSystemCount(); ++i) {
         ImpulseResponse *response = engine->getExhaustSystem(i)->getImpulseResponse();
 
-        ysWindowsAudioWaveFile waveFile;
+        PlatformAudioWaveFile waveFile;
         waveFile.OpenFile(response->getFilename().c_str());
         waveFile.InitializeInternalBuffer(waveFile.GetSampleCount());
         waveFile.FillBuffer(0);

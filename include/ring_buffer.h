@@ -46,7 +46,16 @@ public:
     }
 
     inline void overwrite(T_Data data, size_t index) {
-        if (start + index < m_capacity) {
+        // BUG FIX (found during M0 macOS bring-up): `start` (missing the
+        // `m_` prefix -- a typo, per the m_start usage on the very next
+        // lines) resolved to the unrelated start() member function further
+        // down this class, not a value. Clang enforces two-phase lookup for
+        // this non-dependent expression at template-definition time
+        // regardless of instantiation, so it fails to compile even though
+        // overwrite() is currently unused/uninstantiated anywhere in this
+        // codebase; MSVC does not enforce this as strictly and only checks
+        // such expressions if/when the template is actually instantiated.
+        if (m_start + index < m_capacity) {
             m_buffer[m_start + index] = data;
         }
         else {

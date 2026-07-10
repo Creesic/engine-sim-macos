@@ -10,9 +10,23 @@
 class GasSystem {
     public:
         struct Mix {
-            double p_fuel = 0.0;
-            double p_inert = 1.0;
-            double p_o2 = 0.0;
+            // PORT NOTE (M0 macOS bring-up): this used to be three
+            // non-static data member initializers (= 0.0 / = 1.0 / = 0.0).
+            // Mix::Mix() is used as a default argument value (`const Mix
+            // &mix = {}`) on GasSystem's own member functions below, and
+            // per the standard, evaluating a nested class's default member
+            // initializers there requires GasSystem's *own* definition to
+            // already be a complete-class context -- which it isn't yet,
+            // since these declarations are themselves part of completing
+            // it. Clang enforces this; MSVC did not catch it. An explicit
+            // default constructor sidesteps the rule entirely (constructor
+            // bodies, like member function bodies, aren't subject to it)
+            // while producing an identical default-constructed Mix.
+            Mix() : p_fuel(0.0), p_inert(1.0), p_o2(0.0) { /* void */ }
+
+            double p_fuel;
+            double p_inert;
+            double p_o2;
         };
 
         struct State {

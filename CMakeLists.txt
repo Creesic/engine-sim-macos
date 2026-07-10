@@ -1,8 +1,72 @@
 cmake_minimum_required(VERSION 3.10)
 
+# Some vendored dependencies (googletest, etc., pulled in via FetchContent)
+# declare an old cmake_minimum_required that a sufficiently new CMake (4.x)
+# refuses to honor outright. Only take effect if the invoker hasn't already
+# picked a policy floor.
+if (NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+endif ()
+
+# Default to an optimized build. With a single-config generator (Makefiles /
+# Ninja) an unset CMAKE_BUILD_TYPE means NO optimization flags at all (-O0),
+# which for this real-time physics simulator is ~5-15x slower -- the
+# difference between ~6 fps and full refresh rate. The Visual Studio build
+# this was ported from always ships an optimized Release config; match that
+# by default here while still allowing an explicit -DCMAKE_BUILD_TYPE=Debug.
+if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
+endif ()
+
+# On Apple Silicon, an x86_64 CMake/toolchain resolved via PATH (e.g. Intel
+# Homebrew at /usr/local, still present after a Rosetta-based Homebrew
+# install) silently produces an x86_64-via-Rosetta build instead of a native
+# arm64 one. That is more than a performance issue for this project: the
+# native macOS windowing/rendering backend has been observed to create a
+# window that exists (correct geometry, real GPU work) but never actually
+# becomes visible on screen when run under Rosetta. Prefer native arm64
+# Homebrew so a plain `cmake -S . -B build` does the right thing by default.
+#
+# `uname -m` is not a reliable way to detect this: if the `cmake` binary
+# itself is x86_64 and running under Rosetta, `uname -m` reports the
+# *translated* architecture (x86_64), not the real hardware. `sysctl
+# hw.optional.arm64` reports true hardware capability regardless of
+# translation, matching the check the discarded first-draft macos.cmake used.
+#
+# CMAKE_OSX_ARCHITECTURES must be set before project()/enable_language() to
+# take effect, but the ordinary `APPLE` variable isn't populated until after
+# that call -- use CMAKE_HOST_APPLE (available immediately, reflects the
+# host running CMake) instead.
+if (CMAKE_HOST_APPLE)
+    execute_process(COMMAND sysctl -n hw.optional.arm64
+        OUTPUT_VARIABLE ENGINE_SIM_HAS_ARM64 OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    if (ENGINE_SIM_HAS_ARM64 STREQUAL "1")
+        # A plain set() here is not enough: project()'s own Darwin platform
+        # setup creates a CMAKE_OSX_ARCHITECTURES cache entry defaulted to
+        # empty and that shadows/overwrites a same-named normal variable.
+        # Write directly to the cache (without FORCE) so it takes effect but
+        # an explicit -DCMAKE_OSX_ARCHITECTURES=... from the invoker still wins.
+        if (NOT DEFINED CACHE{CMAKE_OSX_ARCHITECTURES} AND NOT DEFINED CMAKE_OSX_ARCHITECTURES)
+            set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING "Build architecture")
+        endif ()
+        if (NOT DEFINED CMAKE_PREFIX_PATH AND EXISTS "/opt/homebrew")
+            set(CMAKE_PREFIX_PATH "/opt/homebrew")
+        endif ()
+    endif ()
+endif ()
+
 option(DTV "Enable video output" OFF)
 option(PIRANHA_ENABLED "Enable scripting input" ON)
-option(DISCORD_ENABLED "Enable Discord Rich Presence" ON)
+
+# Discord Rich Presence links a prebuilt Windows-only static library
+# (dependencies/discord/lib/discord-rpc.lib) and has no macOS build; default
+# it off there. Still overridable via -DDISCORD_ENABLED=ON/OFF.
+if (APPLE)
+    option(DISCORD_ENABLED "Enable Discord Rich Presence" OFF)
+else ()
+    option(DISCORD_ENABLED "Enable Discord Rich Presence" ON)
+endif ()
 
 if (DTV)
     add_compile_definitions(ATG_ENGINE_SIM_VIDEO_CAPTURE)

@@ -1,9 +1,15 @@
 add_subdirectory(delta-studio)
 
 set_property(TARGET delta-basic PROPERTY FOLDER "delta")
-set_property(TARGET delta-basic-demo PROPERTY FOLDER "delta")
 set_property(TARGET delta-core PROPERTY FOLDER "delta")
 set_property(TARGET delta-physics PROPERTY FOLDER "delta")
+
+# delta-basic-demo is only built on Windows (see
+# dependencies/submodules/delta-studio/CMakeLists.txt); it does not exist as
+# a target on macOS.
+if (WIN32)
+    set_property(TARGET delta-basic-demo PROPERTY FOLDER "delta")
+endif (WIN32)
 
 add_subdirectory(simple-2d-constraint-solver)
 

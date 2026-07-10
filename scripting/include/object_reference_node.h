@@ -18,9 +18,16 @@ namespace es_script {
             /* void */
         }
 
-        template <typename Type>
+        // PORT NOTE (M0 macOS bring-up): renamed the template parameter from
+        // `Type` to `T_OverrideType` -- it shadowed the enclosing class
+        // template's own `Type` parameter, which Clang rejects outright
+        // ("declaration of 'Type' shadows template parameter") rather than
+        // merely warning about it as MSVC apparently did. Purely a rename of
+        // the parameter's internal name; callers use explicit template
+        // arguments (overrideType<Foo>()) unaffected by this.
+        template <typename T_OverrideType>
         void overrideType() {
-            m_output.overrideType(LookupChannelType<Type>());
+            m_output.overrideType(LookupChannelType<T_OverrideType>());
         }
 
     protected:

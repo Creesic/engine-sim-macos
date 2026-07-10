@@ -2,6 +2,8 @@
 
 #include <iostream>
 
+#if defined(_WIN32)
+
 int WINAPI WinMain(
     _In_ HINSTANCE hInstance,
     _In_opt_ HINSTANCE hPrevInstance,
@@ -19,3 +21,23 @@ int WINAPI WinMain(
 
     return 0;
 }
+
+#else
+
+int main(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+
+    EngineSimApplication application;
+
+    // macOS bring-up (see .porting/goal-macos-opengl-bringup.md): no
+    // HINSTANCE-equivalent exists, so nullptr is passed for the platform
+    // instance handle -- ysMacWindowSystem::ConnectInstance() ignores it.
+    application.initialize(nullptr, ysContextObject::DeviceAPI::OpenGL4_0);
+    application.run();
+    application.destroy();
+
+    return 0;
+}
+
+#endif

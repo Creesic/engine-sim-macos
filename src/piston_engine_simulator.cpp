@@ -33,7 +33,16 @@ PistonEngineSimulator::~PistonEngineSimulator() {
     assert(m_crankshaftFrictionConstraints == nullptr);
     assert(m_exhaustFlowStagingBuffer == nullptr);
     assert(m_delayFilters == nullptr);
-    assert(m_antialiasingFilters == nullptr);
+    // BUG FIX (found during M0 macOS bring-up): m_antialiasingFilters was
+    // never a member of this class (PistonEngineSimulator has no such
+    // pointer/array -- the antialiasing filter members, m_antialiasing/
+    // m_filters[i].antialiasing, belong to Synthesizer, a different class).
+    // This stale assert only went uncompiled before because assert()
+    // expands to ((void)0) in NDEBUG/Release builds, discarding its
+    // argument entirely without semantic checking; a debug build (this
+    // port's convention) exposed it as a hard "undeclared identifier"
+    // error. Removed rather than inventing a member for a resource this
+    // class never owned.
 }
 
 void PistonEngineSimulator::loadSimulation(Engine *engine, Vehicle *vehicle, Transmission *transmission) {
