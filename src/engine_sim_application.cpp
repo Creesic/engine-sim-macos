@@ -161,12 +161,21 @@ void EngineSimApplication::initialize(void *instance, ysContextObject::DeviceAPI
 
     m_assetManager.SetEngine(&m_engine);
 
+    // Per-frame UI geometry buffers. Enlarged from the original 100k vertex /
+    // 200k index sizes: on a Retina/HiDPI display the UI renders at 2x backing
+    // resolution, so radius-based tessellation (gauge arcs, circles, the
+    // engine cutaway) emits proportionally more triangles -- a full frame now
+    // uses ~195k indices before the oscilloscopes are even reached. At the old
+    // 200k index cap the scopes (drawn last) failed GeometryGenerator::
+    // startPath's capacity check and silently rendered nothing, leaving the
+    // exhaust-flow / waveform panels blank. These sizes leave comfortable
+    // headroom for the full dashboard at 2x.
     m_engine.GetDevice()->CreateIndexBuffer(
-        &m_geometryIndexBuffer, sizeof(unsigned short) * 200000, nullptr);
+        &m_geometryIndexBuffer, sizeof(unsigned short) * 500000, nullptr);
     m_engine.GetDevice()->CreateVertexBuffer(
-        &m_geometryVertexBuffer, sizeof(dbasic::Vertex) * 100000, nullptr);
+        &m_geometryVertexBuffer, sizeof(dbasic::Vertex) * 250000, nullptr);
 
-    m_geometryGenerator.initialize(100000, 200000);
+    m_geometryGenerator.initialize(250000, 500000);
 
     initialize();
 }
