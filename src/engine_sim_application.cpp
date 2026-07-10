@@ -701,6 +701,12 @@ void EngineSimApplication::processEngineInput() {
         return;
     }
 
+    // Remote plant controls from the ECU simulator. Applied only while
+    // packets are fresh; keyboard control resumes when they stop.
+    m_ecuBridge.pollControls();
+    const bool remoteCtrl = m_ecuBridge.controlsFresh();
+    const AngeesControlV1 &rc = m_ecuBridge.controls();
+
     const float dt = m_engine.GetFrameLength();
     const bool fineControlMode = m_engine.IsKeyDown(ysKey::Code::Space);
 
@@ -820,6 +826,10 @@ void EngineSimApplication::processEngineInput() {
         m_targetSpeedSetting = clamp(m_targetSpeedSetting + mouseWheelDelta * 0.0001);
     }
 
+    if (remoteCtrl) {
+        m_targetSpeedSetting = clamp(static_cast<double>(rc.throttle));
+    }
+
     if (prevTargetThrottle != m_targetSpeedSetting) {
         m_infoCluster->setLogMessage("Speed control set to " + std::to_string(m_targetSpeedSetting));
     }
@@ -861,6 +871,14 @@ void EngineSimApplication::processEngineInput() {
         m_infoCluster->setLogMessage(msg);
     }
 
+    if (remoteCtrl) {
+        m_simulator->m_dyno.m_enabled = (rc.flags & ANGEES_CTRL_DYNO_ENABLED) != 0;
+        m_simulator->m_dyno.m_hold = (rc.flags & ANGEES_CTRL_DYNO_HOLD) != 0;
+        if (m_simulator->m_dyno.m_hold) {
+            m_dynoSpeed = units::rpm(rc.dynoHoldRpm);
+        }
+    }
+
     if (m_simulator->m_dyno.m_enabled) {
         if (!m_simulator->m_dyno.m_hold) {
             if (m_simulator->getFilteredDynoTorque() > units::torque(1.0, units::ft_lb)) {
@@ -893,11 +911,20 @@ void EngineSimApplication::processEngineInput() {
         m_simulator->m_starterMotor.m_enabled = false;
     }
 
+    if (remoteCtrl && (rc.flags & ANGEES_CTRL_STARTER) != 0) {
+        m_simulator->m_starterMotor.m_enabled = true;
+    }
+
     if (prevStarterEnabled != m_simulator->m_starterMotor.m_enabled) {
         const std::string msg = m_simulator->m_starterMotor.m_enabled
             ? "STARTER ENABLED"
             : "STARTER DISABLED";
         m_infoCluster->setLogMessage(msg);
+    }
+
+    if (remoteCtrl) {
+        m_simulator->getEngine()->getIgnitionModule()->m_enabled =
+            (rc.flags & ANGEES_CTRL_IGNITION) != 0;
     }
 
     if (m_engine.ProcessKeyDown(ysKey::Code::A)) {

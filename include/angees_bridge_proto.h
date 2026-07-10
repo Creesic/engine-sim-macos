@@ -36,4 +36,30 @@ static_assert(sizeof(AngeesStateV1) == 44, "AngeesStateV1 must stay 44 bytes");
 static constexpr uint8_t ANGEES_FLAG_DYNO_ENABLED = 1 << 0;
 static constexpr uint8_t ANGEES_FLAG_DYNO_HOLD    = 1 << 1;
 
+// Reverse channel: ECU GUI -> AngeES plant controls. Absolute state, re-sent
+// every GUI frame while remote control is enabled; the plant applies it only
+// while packets are fresh (<500 ms) and reverts to keyboard control when they
+// stop. No toggles or pulses so lost/duplicated datagrams are harmless.
+static constexpr uint32_t ANGEES_CTRL_MAGIC = 0x43434541; // "AECC" little-endian
+static constexpr uint8_t  ANGEES_CTRL_V     = 1;
+static constexpr uint16_t ANGEES_CTRL_PORT  = 29011;
+
+static constexpr uint8_t ANGEES_CTRL_IGNITION     = 1 << 0;
+static constexpr uint8_t ANGEES_CTRL_STARTER      = 1 << 1;
+static constexpr uint8_t ANGEES_CTRL_DYNO_ENABLED = 1 << 2;
+static constexpr uint8_t ANGEES_CTRL_DYNO_HOLD    = 1 << 3;
+
+#pragma pack(push, 1)
+struct AngeesControlV1 {
+    uint32_t magic;        // ANGEES_CTRL_MAGIC
+    uint8_t  version;      // ANGEES_CTRL_V
+    uint8_t  flags;        // ANGEES_CTRL_* bits
+    uint16_t seq;          // wrapping sequence number
+    float    throttle;     // throttle target [0..1]
+    float    dynoHoldRpm;  // dyno hold target [RPM]; plant clamps to its range
+};
+#pragma pack(pop)
+
+static_assert(sizeof(AngeesControlV1) == 16, "AngeesControlV1 must stay 16 bytes");
+
 #endif /* ATG_ENGINE_SIM_ANGEES_BRIDGE_PROTO_H */
