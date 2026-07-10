@@ -271,6 +271,7 @@ add_executable(engine-sim-app WIN32
     # Source files
     src/main.cpp
     src/engine_sim_application.cpp
+    src/ecu_bridge.cpp
     src/geometry_generator.cpp
     src/simulation_object.cpp
     src/piston_object.cpp

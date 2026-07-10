@@ -181,6 +181,7 @@ void EngineSimApplication::initialize(void *instance, ysContextObject::DeviceAPI
 }
 
 void EngineSimApplication::initialize() {
+    m_ecuBridge.initialize();
     m_shaders.SetClearColor(ysColor::srgbiToLinear(0x34, 0x98, 0xdb));
     m_assetManager.CompileInterchangeFile((m_assetPath + "/assets").c_str(), 1.0f, true);
     m_assetManager.LoadSceneFile((m_assetPath + "/assets").c_str(), true);
@@ -268,6 +269,8 @@ void EngineSimApplication::process(float frame_dt) {
     auto proc_t1 = std::chrono::steady_clock::now();
 
     m_simulator->endFrame();
+
+    m_ecuBridge.publish(m_simulator);
 
     auto duration = proc_t1 - proc_t0;
     if (iterationCount > 0) {
@@ -457,6 +460,7 @@ void EngineSimApplication::destroy() {
 
     m_simulator->destroy();
     m_audioBuffer.destroy();
+    m_ecuBridge.destroy();
 }
 
 void EngineSimApplication::loadEngine(
