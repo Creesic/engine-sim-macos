@@ -54,32 +54,48 @@ void IgnitionModule::update(double dt) {
     const double cycleAngle = m_crankshaft->getCycleAngle();
 
     if (m_enabled && m_revLimitTimer == 0) {
-        const double fourPi = 4 * constants::pi;
-        const double advance = getTimingAdvance();
-
-        for (int i = 0; i < m_cylinderCount; ++i) {
-            double adjustedAngle = positiveMod(m_plugs[i].angle - advance, fourPi);
-            const double r0 = m_lastCrankshaftAngle;
-            double r1 = cycleAngle;
-
-            if (m_crankshaft->m_body.v_theta < 0) {
-                if (r1 < r0) {
-                    r1 += fourPi;
-                    adjustedAngle += fourPi;
-                }
-
-                if (adjustedAngle >= r0 && adjustedAngle < r1) {
-                    m_plugs[i].ignitionEvent = m_plugs[i].enabled;
+        if (m_externalControl) {
+            // Closed-loop ignition (M4a): the ECU is the sole source of
+            // truth for timing here - drain every event queued since the
+            // last sub-step and skip the advance-curve sweep below entirely,
+            // so a cylinder can't fire twice from two different sources.
+            if (m_externalSource) {
+                int cyl;
+                while (m_externalSource(cyl)) {
+                    if (cyl >= 0 && cyl < m_cylinderCount && m_plugs[cyl].enabled) {
+                        m_plugs[cyl].ignitionEvent = true;
+                    }
                 }
             }
-            else {
-                if (r1 > r0) {
-                    r1 -= fourPi;
-                    adjustedAngle -= fourPi;
-                }
+        }
+        else {
+            const double fourPi = 4 * constants::pi;
+            const double advance = getTimingAdvance();
 
-                if (adjustedAngle >= r1 && adjustedAngle < r0) {
-                    m_plugs[i].ignitionEvent = m_plugs[i].enabled;
+            for (int i = 0; i < m_cylinderCount; ++i) {
+                double adjustedAngle = positiveMod(m_plugs[i].angle - advance, fourPi);
+                const double r0 = m_lastCrankshaftAngle;
+                double r1 = cycleAngle;
+
+                if (m_crankshaft->m_body.v_theta < 0) {
+                    if (r1 < r0) {
+                        r1 += fourPi;
+                        adjustedAngle += fourPi;
+                    }
+
+                    if (adjustedAngle >= r0 && adjustedAngle < r1) {
+                        m_plugs[i].ignitionEvent = m_plugs[i].enabled;
+                    }
+                }
+                else {
+                    if (r1 > r0) {
+                        r1 -= fourPi;
+                        adjustedAngle -= fourPi;
+                    }
+
+                    if (adjustedAngle >= r1 && adjustedAngle < r0) {
+                        m_plugs[i].ignitionEvent = m_plugs[i].enabled;
+                    }
                 }
             }
         }

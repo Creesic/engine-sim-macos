@@ -192,6 +192,13 @@ void EngineSimApplication::initialize() {
 
     loadScript();
 
+    // Closed-loop ignition (M4a): wire the ECU bridge as the physics loop's
+    // per-substep external spark source (see IgnitionModule::update()).
+    if (m_simulator != nullptr && m_simulator->getEngine() != nullptr) {
+        m_simulator->getEngine()->getIgnitionModule()->setExternalIgnitionSource(
+            [this](int &cyl) { return m_ecuBridge.popSparkEvent(cyl); });
+    }
+
     m_audioBuffer.initialize(44100, 44100);
     m_audioBuffer.m_writePointer = (int)(44100 * 0.1);
 
@@ -706,6 +713,13 @@ void EngineSimApplication::processEngineInput() {
     m_ecuBridge.pollControls();
     const bool remoteCtrl = m_ecuBridge.controlsFresh();
     const AngeesControlV1 &rc = m_ecuBridge.controls();
+
+    // Closed-loop ignition (M4a): the enable/disable boundary only needs
+    // frame-rate granularity - the actual spark events are drained at full
+    // physics sub-step resolution inside IgnitionModule::update() itself via
+    // the ExternalIgnitionSource wired up in initialize().
+    m_simulator->getEngine()->getIgnitionModule()->setExternalIgnitionEnabled(
+        m_ecuBridge.sparkLinkFresh());
 
     const float dt = m_engine.GetFrameLength();
     const bool fineControlMode = m_engine.IsKeyDown(ysKey::Code::Space);

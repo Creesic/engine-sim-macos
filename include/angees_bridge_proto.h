@@ -62,4 +62,31 @@ struct AngeesControlV1 {
 
 static_assert(sizeof(AngeesControlV1) == 16, "AngeesControlV1 must stay 16 bytes");
 
+// Closed-loop ignition: ECU sim -> AngeES per-cylinder spark events. Sent
+// immediately when the firmware's real ignition-coil GPIO pin toggles on the
+// configured edge (default falling = discharge), one packet per cylinder
+// fire - NOT a continuous state packet like the two above. No angle payload:
+// timing is implicit in when the packet arrives (synchronous with the real
+// firmware pin write). "slot" is a 0-based coil-output slot the user wires to
+// a Gpio pin in the sim GUI; AngeES fires cylinder index == slot (fixed 1:1 -
+// re-wire the slot on the ECU side if the physical firing order differs).
+// Mode is implicit: AngeES treats "a spark packet arrived in the last 500 ms"
+// as external-ignition-active and reverts to its own timing curve otherwise,
+// so there is no separate enable/disable flag - the ECU side simply stops
+// sending when its closed-loop checkbox is off.
+static constexpr uint32_t ANGEES_SPARK_MAGIC = 0x4B505341; // "ASPK" little-endian
+static constexpr uint8_t  ANGEES_SPARK_V     = 1;
+static constexpr uint16_t ANGEES_SPARK_PORT  = 29012;
+
+#pragma pack(push, 1)
+struct AngeesSparkEventV1 {
+    uint32_t magic;   // ANGEES_SPARK_MAGIC
+    uint8_t  version; // ANGEES_SPARK_V
+    uint8_t  slot;    // 0-based coil slot == AngeES cylinder index
+    uint16_t seq;     // wrapping sequence number, for drop counting
+};
+#pragma pack(pop)
+
+static_assert(sizeof(AngeesSparkEventV1) == 8, "AngeesSparkEventV1 must stay 8 bytes");
+
 #endif /* ATG_ENGINE_SIM_ANGEES_BRIDGE_PROTO_H */

@@ -9,7 +9,17 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
+
+namespace {
+constexpr size_t kMaxQueuedSparkEvents = 64;
+
+long long nowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+} // namespace
 
 void EcuBridge::initialize() {
     m_fd = ::socket(AF_INET, SOCK_DGRAM, 0);
@@ -36,6 +46,61 @@ void EcuBridge::initialize() {
             ::fcntl(m_ctrlFd, F_SETFL, O_NONBLOCK);
         }
     }
+
+    m_sparkFd = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (m_sparkFd >= 0) {
+        int reuse = 1;
+        ::setsockopt(m_sparkFd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(ANGEES_SPARK_PORT);
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (::bind(m_sparkFd, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)) < 0) {
+            ::close(m_sparkFd);
+            m_sparkFd = -1;
+        }
+        else {
+            // Blocking, on its own detached thread - unlike pollControls()
+            // this can't wait for a once-per-frame poll; spark timing needs
+            // continuous draining at sub-frame resolution.
+            std::thread([this] { sparkRxLoop(); }).detach();
+        }
+    }
+}
+
+void EcuBridge::sparkRxLoop() {
+    for (;;) {
+        AngeesSparkEventV1 pkt;
+        const ssize_t n = ::recvfrom(m_sparkFd, &pkt, sizeof(pkt), 0, nullptr, nullptr);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break; // socket closed / unrecoverable
+        }
+        if (n != sizeof(pkt) || pkt.magic != ANGEES_SPARK_MAGIC || pkt.version != ANGEES_SPARK_V)
+            continue;
+
+        m_sparkLastRxMs.store(nowMs());
+
+        std::lock_guard<std::mutex> lock(m_sparkMutex);
+        if (m_sparkQueue.size() >= kMaxQueuedSparkEvents) {
+            m_sparkQueue.pop_front(); // drop oldest on overflow
+        }
+        m_sparkQueue.push_back(pkt.slot);
+    }
+}
+
+bool EcuBridge::popSparkEvent(int &cylinderIndexOut) {
+    std::lock_guard<std::mutex> lock(m_sparkMutex);
+    if (m_sparkQueue.empty()) return false;
+    cylinderIndexOut = m_sparkQueue.front();
+    m_sparkQueue.pop_front();
+    return true;
+}
+
+bool EcuBridge::sparkLinkFresh() const {
+    const long long last = m_sparkLastRxMs.load();
+    return last != 0 && (nowMs() - last) < 500;
 }
 
 void EcuBridge::pollControls() {
@@ -101,5 +166,9 @@ void EcuBridge::destroy() {
     if (m_ctrlFd >= 0) {
         ::close(m_ctrlFd);
         m_ctrlFd = -1;
+    }
+    if (m_sparkFd >= 0) {
+        ::close(m_sparkFd);
+        m_sparkFd = -1;
     }
 }
