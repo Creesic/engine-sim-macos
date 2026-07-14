@@ -1,0 +1,510 @@
+// BMW N63TU - 4.4L twin-turbo "hot-vee" V8 (2012+ Technical Update revision).
+//
+// Real specs (bore 89mm / stroke 88.3mm -> 4395cc, firing order 1-5-4-8-6-3-7-2,
+// cross-plane crank): https://en.wikipedia.org/wiki/BMW_N63
+//
+// IMPORTANT - what this script does NOT model: AngeES has no forced-induction
+// physics anywhere (no turbo/compressor/wastegate node exists at the script or
+// C++ level - confirmed by inspection of es/, src/, include/). This is a
+// naturally-aspirated-physics approximation of the N63TU's geometry and
+// character only: real bore/stroke/compression/firing order, a short "hot-vee"
+// primary-tube length (turbos sit in the valley between the banks, a
+// world-first for a production engine, so the run from exhaust port to turbo
+// inlet is short), and a mellower exhaust note. It will NOT produce boost
+// pressure, turbo lag, or spool-up - manifold pressure here never exceeds 1 atm.
+//
+// "Hot-vee" itself is a naming/geometry choice, not a distinct physics mode:
+// cylinder_bank/intake/exhaust_system nodes have no side/direction parameter
+// the gas-flow math reads (flip_display only affects 3D valve rendering), so
+// there is nothing to toggle for it beyond the short primary tube noted above.
+//
+// Structure: the power/breathing infrastructure (generic_cylinder_head with
+// raw flow-table values, intake/exhaust, fuel model) follows the proven-running
+// GM LS template (assets/engines/atg-video-2/07_gm_ls.mr) so the engine
+// actually catches and makes power. The BMW-specific bits - cross-plane crank
+// tdc/journal/bank geometry, sequential-per-bank cylinder numbering (cyl 1-4
+// on bank 1, 5-8 on bank 2), cam-lobe phasing, and the 1-5-4-8-6-3-7-2 firing
+// order - were cross-checked against a known-good community BMW S63/S62
+// cross-plane V8 script (same 89x88.3 bore/stroke, same real firing order) so
+// ignition and valve events land on the correct strokes.
+
+import "engine_sim.mr"
+
+units units()
+constants constants()
+impulse_response_library ir_lib()
+label cycle(2 * 360 * units.deg)
+
+private node wires {
+    output wire1: ignition_wire();
+    output wire2: ignition_wire();
+    output wire3: ignition_wire();
+    output wire4: ignition_wire();
+    output wire5: ignition_wire();
+    output wire6: ignition_wire();
+    output wire7: ignition_wire();
+    output wire8: ignition_wire();
+}
+
+// DOHC 4-valve turbo head. Flow-table values are RAW (as generic_cylinder_head
+// expects when fed a plain function - matching the GM LS template), NOT wrapped
+// in k_28inH2O (that returns a flow *coefficient*, which starves the engine and
+// prevents it from ever catching). Numbers are stylized for audio/response feel,
+// scaled modestly above the LS 2-valve baseline for a 4-valve head.
+private node n63_head {
+    input intake_camshaft;
+    input exhaust_camshaft;
+    input chamber_volume: 61.0 * units.cc;
+    input intake_runner_volume: 130.0 * units.cc;
+    input intake_runner_cross_section_area: 1.9 * units.inch * 1.9 * units.inch;
+    input exhaust_runner_volume: 50.0 * units.cc;
+    input exhaust_runner_cross_section_area: 1.5 * units.inch * 1.5 * units.inch;
+
+    input flow_attenuation: 1.0;
+    input lift_scale: 1.0;
+    input flip_display: false;
+    alias output __out: head;
+
+    function intake_flow(50 * units.thou)
+    intake_flow
+        .add_flow_sample(0 * lift_scale, 0 * flow_attenuation)
+        .add_flow_sample(50 * lift_scale, 30 * flow_attenuation)
+        .add_flow_sample(100 * lift_scale, 115 * flow_attenuation)
+        .add_flow_sample(150 * lift_scale, 168 * flow_attenuation)
+        .add_flow_sample(200 * lift_scale, 226 * flow_attenuation)
+        .add_flow_sample(250 * lift_scale, 262 * flow_attenuation)
+        .add_flow_sample(300 * lift_scale, 283 * flow_attenuation)
+        .add_flow_sample(350 * lift_scale, 296 * flow_attenuation)
+        .add_flow_sample(400 * lift_scale, 302 * flow_attenuation)
+        .add_flow_sample(450 * lift_scale, 305 * flow_attenuation)
+
+    function exhaust_flow(50 * units.thou)
+    exhaust_flow
+        .add_flow_sample(0 * lift_scale, 0 * flow_attenuation)
+        .add_flow_sample(50 * lift_scale, 30 * flow_attenuation)
+        .add_flow_sample(100 * lift_scale, 90 * flow_attenuation)
+        .add_flow_sample(150 * lift_scale, 130 * flow_attenuation)
+        .add_flow_sample(200 * lift_scale, 175 * flow_attenuation)
+        .add_flow_sample(250 * lift_scale, 210 * flow_attenuation)
+        .add_flow_sample(300 * lift_scale, 235 * flow_attenuation)
+        .add_flow_sample(350 * lift_scale, 250 * flow_attenuation)
+        .add_flow_sample(400 * lift_scale, 260 * flow_attenuation)
+        .add_flow_sample(450 * lift_scale, 262 * flow_attenuation)
+
+    generic_cylinder_head head(
+        chamber_volume: chamber_volume,
+        intake_runner_volume: intake_runner_volume,
+        intake_runner_cross_section_area: intake_runner_cross_section_area,
+        exhaust_runner_volume: exhaust_runner_volume,
+        exhaust_runner_cross_section_area: exhaust_runner_cross_section_area,
+
+        intake_port_flow: intake_flow,
+        exhaust_port_flow: exhaust_flow,
+        valvetrain: standard_valvetrain(
+            intake_camshaft: intake_camshaft,
+            exhaust_camshaft: exhaust_camshaft
+        ),
+        flip_display: flip_display
+    )
+}
+
+// One intake+exhaust cam pair per bank. Lobe phasing matches the reference BMW
+// cross-plane V8 for sequential-per-bank cylinder numbering.
+private node n63_camshaft {
+    input lobe_profile;
+    input intake_lobe_profile: lobe_profile;
+    input exhaust_lobe_profile: lobe_profile;
+    input lobe_separation: 114 * units.deg;
+    input intake_lobe_center: lobe_separation;
+    input exhaust_lobe_center: lobe_separation;
+    input advance: 0 * units.deg;
+    input base_radius: 0.7 * units.inch;
+
+    output intake_cam_0: _intake_cam_0;
+    output exhaust_cam_0: _exhaust_cam_0;
+
+    output intake_cam_1: _intake_cam_1;
+    output exhaust_cam_1: _exhaust_cam_1;
+
+    camshaft_parameters params(
+        advance: advance,
+        base_radius: base_radius
+    )
+
+    camshaft _intake_cam_0(params, lobe_profile: intake_lobe_profile)
+    camshaft _exhaust_cam_0(params, lobe_profile: exhaust_lobe_profile)
+    camshaft _intake_cam_1(params, lobe_profile: intake_lobe_profile)
+    camshaft _exhaust_cam_1(params, lobe_profile: exhaust_lobe_profile)
+
+    label rot(90 * units.deg)
+    label rot360(360 * units.deg)
+
+    // Firing order 1-5-4-8-6-3-7-2. Bank 1 = cyl 1,2,3,4 (rj0..rj3); each N
+    // below is that cylinder's zero-based position in the firing order.
+    _exhaust_cam_0
+        .add_lobe(rot360 - exhaust_lobe_center + 0 * rot) // cyl 1
+        .add_lobe(rot360 - exhaust_lobe_center + 7 * rot) // cyl 2
+        .add_lobe(rot360 - exhaust_lobe_center + 5 * rot) // cyl 3
+        .add_lobe(rot360 - exhaust_lobe_center + 2 * rot) // cyl 4
+    _intake_cam_0
+        .add_lobe(rot360 + intake_lobe_center + 0 * rot) // cyl 1
+        .add_lobe(rot360 + intake_lobe_center + 7 * rot) // cyl 2
+        .add_lobe(rot360 + intake_lobe_center + 5 * rot) // cyl 3
+        .add_lobe(rot360 + intake_lobe_center + 2 * rot) // cyl 4
+
+    // Bank 2 = cyl 5,6,7,8 (rj0..rj3).
+    _exhaust_cam_1
+        .add_lobe(rot360 - exhaust_lobe_center + 1 * rot) // cyl 5
+        .add_lobe(rot360 - exhaust_lobe_center + 4 * rot) // cyl 6
+        .add_lobe(rot360 - exhaust_lobe_center + 6 * rot) // cyl 7
+        .add_lobe(rot360 - exhaust_lobe_center + 3 * rot) // cyl 8
+    _intake_cam_1
+        .add_lobe(rot360 + intake_lobe_center + 1 * rot) // cyl 5
+        .add_lobe(rot360 + intake_lobe_center + 4 * rot) // cyl 6
+        .add_lobe(rot360 + intake_lobe_center + 6 * rot) // cyl 7
+        .add_lobe(rot360 + intake_lobe_center + 3 * rot) // cyl 8
+}
+
+private node turbulence_to_flame_speed_ratio {
+    alias output __out:
+        function(5.0)
+            .add_sample(0.0, 3.0)
+            .add_sample(5.0, 1.5 * 5.0)
+            .add_sample(10.0, 1.75 * 10.0)
+            .add_sample(15.0, 2.0 * 15.0)
+            .add_sample(20.0, 2.0 * 20.0)
+            .add_sample(25.0, 2.0 * 25.0)
+            .add_sample(30.0, 2.0 * 30.0)
+            .add_sample(35.0, 2.0 * 35.0)
+            .add_sample(40.0, 2.0 * 40.0)
+            .add_sample(45.0, 2.0 * 45.0);
+}
+
+public node n63tu_v8 {
+    alias output __out: engine;
+
+    engine engine(
+        name: "BMW N63TU",
+        starter_torque: 220 * units.lb_ft,
+        starter_speed: 250 * units.rpm,
+        redline: 6900 * units.rpm,
+        throttle_gamma: 2.0,
+        fuel: fuel(
+            max_burning_efficiency: 1.0,
+            turbulence_to_flame_speed_ratio: turbulence_to_flame_speed_ratio()
+        ),
+        hf_gain: 0.008,
+        noise: 0.9,
+        jitter: 0.5,
+        simulation_frequency: 10000
+    )
+
+    wires wires()
+
+    // Real N63TU geometry: 89mm bore x 88.3mm stroke -> 549.4cc/cyl x 8 =
+    // 4395cc (4.4L). chamber_volume in n63_head (61cc) sizes the emergent
+    // compression ratio (swept+chamber)/chamber to the real ~10.0:1 - there
+    // is no direct compression_ratio input, CR is always emergent here.
+    label stroke(88.3 * units.mm)
+    label bore(89.0 * units.mm)
+    label rod_length(145 * units.mm)
+    label rod_mass(50 * units.g)
+    label compression_height(28.0 * units.mm)
+    label crank_mass(60 * units.lb)
+    label flywheel_mass(30 * units.lb)
+    label flywheel_radius(8 * units.inch)
+
+    label crank_moment(
+        1.5 * disk_moment_of_inertia(mass: crank_mass, radius: stroke)
+    )
+    label flywheel_moment(
+        disk_moment_of_inertia(mass: flywheel_mass, radius: flywheel_radius)
+    )
+    label other_moment( // Moment from cams, pulleys, etc [estimated]
+        disk_moment_of_inertia(mass: 1 * units.kg, radius: 1.0 * units.cm)
+    )
+
+    label v_angle(90 * units.deg)
+
+    // Cross-plane crank. tdc/journal-angle/bank-sign values match the
+    // reference BMW cross-plane V8 script (verified to fire on the correct
+    // strokes for the 1-5-4-8-6-3-7-2 order below) - note the tdc uses "+"
+    // and the bank angles below use b0=+45 / b1=-45, opposite of the GM LS
+    // template this file's breathing infrastructure came from.
+    crankshaft c0(
+        throw: stroke / 2,
+        flywheel_mass: flywheel_mass,
+        mass: crank_mass,
+        friction_torque: 20.0 * units.lb_ft,
+        moment_of_inertia:
+            crank_moment + flywheel_moment + other_moment,
+        position_x: 0.0,
+        position_y: 0.0,
+        tdc: 90 * units.deg + (v_angle / 2.0)
+    )
+
+    rod_journal rj0(angle: 0 * units.deg)
+    rod_journal rj1(angle: -90 * units.deg)
+    rod_journal rj2(angle: 90 * units.deg)
+    rod_journal rj3(angle: 180 * units.deg)
+    c0
+        .add_rod_journal(rj0)
+        .add_rod_journal(rj1)
+        .add_rod_journal(rj2)
+        .add_rod_journal(rj3)
+
+    piston_parameters piston_params(
+        mass: 90 * units.g,
+        compression_height: compression_height,
+        wrist_pin_position: 0.0,
+        displacement: 0.0
+    )
+
+    connecting_rod_parameters cr_params(
+        mass: rod_mass,
+        moment_of_inertia: rod_moment_of_inertia(
+            mass: rod_mass,
+            length: rod_length
+        ),
+        center_of_mass: 0.0,
+        length: rod_length
+    )
+
+    intake intake(
+        plenum_volume: 1.3 * units.L,
+        plenum_cross_section_area: 20.0 * units.cm2,
+        intake_flow_rate: k_carb(700.0),
+        runner_flow_rate: k_carb(100.0),
+        runner_length: 9.0 * units.inch,
+        idle_flow_rate: k_carb(0.0),
+        idle_throttle_plate_position: 0.996,
+        velocity_decay: 0.5
+    )
+
+    // Short "hot-vee" primary tube - turbos in the valley mean a short run
+    // from exhaust port to turbine inlet. No turbine/wastegate backpressure
+    // is modeled past this point (see file header).
+    exhaust_system_parameters es_params(
+        outlet_flow_rate: k_carb(1000.0),
+        primary_tube_length: 10.0 * units.inch,
+        primary_flow_rate: k_carb(500.0),
+        velocity_decay: 1.0
+    )
+
+    exhaust_system exhaust0(
+        es_params,
+        audio_volume: 3.0,
+        length: 90 * units.inch,
+        impulse_response: ir_lib.mild_exhaust_0_reverb
+    )
+    exhaust_system exhaust1(
+        es_params,
+        audio_volume: 3.0,
+        length: 150 * units.inch,
+        impulse_response: ir_lib.mild_exhaust_0_reverb
+    )
+
+    cylinder_bank_parameters bank_params(
+        bore: bore,
+        deck_height: stroke / 2 + rod_length + compression_height
+    )
+
+    label spacing(2 * units.inch)
+
+    // Bank 1 = cylinders 1-4 (wire1..wire4), Bank 2 = cylinders 5-8
+    // (wire5..wire8) - BMW's sequential-per-bank numbering. Each bank's
+    // cylinders sit on rj0..rj3 in order.
+    cylinder_bank b0(bank_params, angle: v_angle / 2.0)
+    cylinder_bank b1(bank_params, angle: -v_angle / 2.0)
+    b0
+        .add_cylinder(
+            piston: piston(piston_params, blowby: k_28inH2O(0.0)),
+            connecting_rod: connecting_rod(cr_params),
+            rod_journal: rj0,
+            intake: intake,
+            exhaust_system: exhaust0,
+            ignition_wire: wires.wire1,
+            sound_attenuation: 1.0,
+            primary_length: 3 * spacing + 2 * units.cm
+        )
+        .add_cylinder(
+            piston: piston(piston_params, blowby: k_28inH2O(0.0)),
+            connecting_rod: connecting_rod(cr_params),
+            rod_journal: rj1,
+            intake: intake,
+            exhaust_system: exhaust0,
+            ignition_wire: wires.wire2,
+            sound_attenuation: 1.0,
+            primary_length: 2 * spacing + 1 * units.cm
+        )
+        .add_cylinder(
+            piston: piston(piston_params, blowby: k_28inH2O(0.0)),
+            connecting_rod: connecting_rod(cr_params),
+            rod_journal: rj2,
+            intake: intake,
+            exhaust_system: exhaust0,
+            ignition_wire: wires.wire3,
+            sound_attenuation: 1.0,
+            primary_length: 1 * spacing + 3 * units.cm
+        )
+        .add_cylinder(
+            piston: piston(piston_params, blowby: k_28inH2O(0.0)),
+            connecting_rod: connecting_rod(cr_params),
+            rod_journal: rj3,
+            intake: intake,
+            exhaust_system: exhaust0,
+            ignition_wire: wires.wire4,
+            sound_attenuation: 1.0,
+            primary_length: 0 * spacing + 5 * units.cm
+        )
+        .set_cylinder_head(
+            n63_head(
+                intake_camshaft: camshaft.intake_cam_0,
+                exhaust_camshaft: camshaft.exhaust_cam_0,
+                flip_display: false,
+                flow_attenuation: 1.0)
+        )
+    b1
+        .add_cylinder(
+            piston: piston(piston_params, blowby: k_28inH2O(0.0)),
+            connecting_rod: connecting_rod(cr_params),
+            rod_journal: rj0,
+            intake: intake,
+            exhaust_system: exhaust1,
+            ignition_wire: wires.wire5,
+            sound_attenuation: 1.0,
+            primary_length: 3 * spacing + 1 * units.cm
+        )
+        .add_cylinder(
+            piston: piston(piston_params, blowby: k_28inH2O(0.0)),
+            connecting_rod: connecting_rod(cr_params),
+            rod_journal: rj1,
+            intake: intake,
+            exhaust_system: exhaust1,
+            ignition_wire: wires.wire6,
+            sound_attenuation: 1.0,
+            primary_length: 2 * spacing + 5 * units.cm
+        )
+        .add_cylinder(
+            piston: piston(piston_params, blowby: k_28inH2O(0.0)),
+            connecting_rod: connecting_rod(cr_params),
+            rod_journal: rj2,
+            intake: intake,
+            exhaust_system: exhaust1,
+            ignition_wire: wires.wire7,
+            sound_attenuation: 1.0,
+            primary_length: 1 * spacing + 7 * units.cm
+        )
+        .add_cylinder(
+            piston: piston(piston_params, blowby: k_28inH2O(0.0)),
+            connecting_rod: connecting_rod(cr_params),
+            rod_journal: rj3,
+            intake: intake,
+            exhaust_system: exhaust1,
+            ignition_wire: wires.wire8,
+            sound_attenuation: 1.0,
+            primary_length: 0 * spacing + 0 * units.cm
+        )
+        .set_cylinder_head(
+            n63_head(
+                intake_camshaft: camshaft.intake_cam_1,
+                exhaust_camshaft: camshaft.exhaust_cam_1,
+                flow_attenuation: 1.0,
+                flip_display: true)
+        )
+
+    engine
+        .add_cylinder_bank(b0)
+        .add_cylinder_bank(b1)
+
+    engine.add_crankshaft(c0)
+
+    harmonic_cam_lobe intake_lobe(
+        duration_at_50_thou: 224 * units.deg,
+        gamma: 1.1,
+        lift: 10.0 * units.mm,
+        steps: 256
+    )
+
+    harmonic_cam_lobe exhaust_lobe(
+        duration_at_50_thou: 224 * units.deg,
+        gamma: 1.1,
+        lift: 10.0 * units.mm,
+        steps: 256
+    )
+
+    n63_camshaft camshaft(
+        lobe_profile: "N/A",
+
+        intake_lobe_profile: intake_lobe,
+        exhaust_lobe_profile: exhaust_lobe,
+        intake_lobe_center: 114 * units.deg,
+        exhaust_lobe_center: 114 * units.deg,
+        base_radius: 0.7 * units.inch
+    )
+
+    function timing_curve(1000 * units.rpm)
+    timing_curve
+        .add_sample(0000 * units.rpm, 12 * units.deg)
+        .add_sample(1000 * units.rpm, 14 * units.deg)
+        .add_sample(2000 * units.rpm, 22 * units.deg)
+        .add_sample(3000 * units.rpm, 30 * units.deg)
+        .add_sample(4000 * units.rpm, 36 * units.deg)
+        .add_sample(5000 * units.rpm, 38 * units.deg)
+        .add_sample(6000 * units.rpm, 38 * units.deg)
+        .add_sample(7000 * units.rpm, 38 * units.deg)
+        .add_sample(8000 * units.rpm, 38 * units.deg)
+
+    // Real N63 firing order: 1-5-4-8-6-3-7-2, 90 deg (1/8 cycle) apart.
+    ignition_module ignition_module(
+        timing_curve: timing_curve,
+        rev_limit: 7100 * units.rpm,
+        limiter_duration: 0.2)
+    ignition_module
+            .connect_wire(wires.wire1, 0 * 90 * units.deg)
+            .connect_wire(wires.wire5, 1 * 90 * units.deg)
+            .connect_wire(wires.wire4, 2 * 90 * units.deg)
+            .connect_wire(wires.wire8, 3 * 90 * units.deg)
+            .connect_wire(wires.wire6, 4 * 90 * units.deg)
+            .connect_wire(wires.wire3, 5 * 90 * units.deg)
+            .connect_wire(wires.wire7, 6 * 90 * units.deg)
+            .connect_wire(wires.wire2, 7 * 90 * units.deg)
+
+    engine.add_ignition_module(ignition_module)
+}
+
+// N63TU shipped in the F10 5-series, F01 7-series, F15 X5, F16 X6, etc. -
+// mass/gearing is a representative estimate for that platform family, paired
+// with an 8-speed transmission (the real N63TU gearbox pairing was ZF's 8HP).
+private node n63_platform_vehicle {
+    alias output __out:
+        vehicle(
+            mass: 2200 * units.kg,
+            drag_coefficient: 0.29,
+            cross_sectional_area: (74 * units.inch) * (58 * units.inch),
+            diff_ratio: 3.15,
+            tire_radius: 12.5 * units.inch,
+            rolling_resistance: 250 * units.N
+        );
+}
+
+private node n63_platform_transmission {
+    alias output __out:
+        transmission(
+            max_clutch_torque: 700 * units.lb_ft
+        )
+        .add_gear(4.71)
+        .add_gear(3.14)
+        .add_gear(2.11)
+        .add_gear(1.67)
+        .add_gear(1.29)
+        .add_gear(1.00)
+        .add_gear(0.84)
+        .add_gear(0.67);
+}
+
+public node main {
+    set_engine(n63tu_v8())
+    set_vehicle(n63_platform_vehicle())
+    set_transmission(n63_platform_transmission())
+}
